@@ -50,8 +50,8 @@ int main() {
     color = cv::Scalar(255, 0, 0); // Blue
     cv::ellipse(img_ellipse_filled, center, major_minor_axes, angle, start_angle, stop_angle, color, -thickness, line_type); // negative thickness to fill circle
 
-    cv::imshow("Circle", img_ellipse);
-    cv::imshow("Filled Circle", img_ellipse_filled);
+    cv::imshow("Ellipse", img_ellipse);
+    cv::imshow("Filled Ellipse", img_ellipse_filled);
     cv::imshow("Original image", img);
     cv::waitKey(0);
     cv::destroyAllWindows();
