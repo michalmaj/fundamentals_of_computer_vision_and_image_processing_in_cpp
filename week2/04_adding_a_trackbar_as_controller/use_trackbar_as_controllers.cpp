@@ -5,6 +5,7 @@
 
 struct UserData {
     cv::Mat img;
+    cv::Mat scaled_img;
     std::string window_name{ "Resize Image" };
     std::string trackbar_value{ "Scale" };
     std::string trackbar_type{ "Type: \n 0: Scale Up \n 1: Scale Down" };
@@ -13,25 +14,25 @@ struct UserData {
     int scale_factor = 1;
     int scale_type = 0;
     int max_type = 1;
-
 };
 
-void scaleImg(int val, void* data) {
+void scaleImg(int, void* data) {
     UserData* ud = static_cast<UserData*>(data);
 
-    double scaled_factor = 1 + ud->scale_factor / 100.0;
+    double scale_factor = 1 + (ud->scale_type == 0 ? ud->scale_factor / 100.0 : -ud->scale_factor / 100.0);
 
-    if (ud->scale_factor == 0) {
-        ud->scale_factor = 1;
+    if (scale_factor <= 0) {
+        scale_factor = 0.1; 
     }
 
-    cv::resize(ud->img, ud->img, cv::Size(), scaled_factor, scaled_factor, cv::INTER_LANCZOS4);
-    cv::imshow(ud->window_name, ud->img);
+    cv::resize(ud->img, ud->scaled_img, cv::Size(), scale_factor, scale_factor, cv::INTER_LANCZOS4);
+    cv::imshow(ud->window_name, ud->scaled_img);
 }
 
 int main() {
     // Path to an image 
     std::string path{ "../data/images/truth.png" };
+
     // Load the image
     UserData ud;
     ud.img = cv::imread(path);
@@ -46,18 +47,22 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    cv::namedWindow(ud.window_name, cv::WINDOW_NORMAL);
+    cv::namedWindow(ud.window_name, cv::WINDOW_AUTOSIZE);
 
+    // Create trackbars
     cv::createTrackbar(ud.trackbar_value, ud.window_name, &ud.scale_factor, ud.max_scale_up, scaleImg, &ud);
-    cv::createTrackbar(ud.trackbar_type, ud.window_name, &ud.scale_factor, ud.max_type, scaleImg, &ud);
+    cv::createTrackbar(ud.trackbar_type, ud.window_name, &ud.scale_type, ud.max_type, scaleImg, &ud);
+
+    // Initial display
+    scaleImg(0, &ud);
 
     while (true) {
-        cv::imshow(ud.window_name, ud.img);
-        auto key = cv::waitKey(0);
+        auto key = cv::waitKey(20);
         if (key == 'q') {
             break;
         }
     }
 
     cv::destroyWindow(ud.window_name);
+    return 0;
 }
