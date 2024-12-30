@@ -19,9 +19,40 @@ int main() {
     std::cout << "\n\n";
 
     // Create a structuring element
-    cv::Mat cross_elemnt{ cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(3, 3)) };
-    std::cout << cross_elemnt;
+    cv::Mat element{ cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(3, 3)) };
+    std::cout << element;
     std::cout << "\n\n";
+
+    // Get info about size of th kernel - just one dimension, because structuring element has NxN shape
+    auto ksize{ element.size().height };
+
+    // Get size of the image
+    auto [width, height] = demo.size();
+    std::cout << width << ", " << height << "\n\n";
+
+    // Set value of border
+    int border{ ksize / 2 };
+
+    cv::Mat paddle_demo{ cv::Mat::zeros(cv::Size(height + border * 2, width + border * 2), CV_8U) };
+    cv::Mat bit_or;
+
+    for (int h_i = border; h_i < height + border; h_i++) {
+        for (int w_i = border; w_i < width + border; w_i++) {
+          if (demo.at<uchar>(h_i - border, w_i - border)) {
+              cv::bitwise_or(paddle_demo(
+                  cv::Range(h_i - border, h_i + border + 1), cv::Range(w_i - border, w_i + border + 1)),
+                  element, 
+                  bit_or);
+              bit_or.copyTo(paddle_demo(
+                  cv::Range(h_i - border, h_i + border + 1), 
+                  cv::Range(w_i - border, w_i + border + 1)));
+          }
+        }
+    }
+
+    cv::Mat dilated_image = paddle_demo(
+        cv::Range(border, border + height), 
+        cv::Range(border, border + width));
 
     std::string blobs{ "Blobs" };
     cv::namedWindow(blobs, cv::WINDOW_NORMAL);
@@ -29,7 +60,11 @@ int main() {
 
     std::string cross{ "Cross" };
     cv::namedWindow(cross, cv::WINDOW_NORMAL);
-    cv::imshow(cross, cross_elemnt * 255);
+    cv::imshow(cross, element * 255);
+
+    std::string dilated{ "Dilated" };
+    cv::namedWindow(dilated, cv::WINDOW_NORMAL);
+    cv::imshow(dilated, dilated_image * 255);
 
 
     cv::waitKey(0);
