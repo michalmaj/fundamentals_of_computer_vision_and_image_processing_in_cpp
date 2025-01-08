@@ -41,15 +41,18 @@ struct CoinDetection {
     // Morphological Operations
     cv::Mat morphed;
     int morph_type{ 0 };
-    int morph_steps{ 4 };
+    int morph_steps{ 3 };
     int kernel_morph_type{ 0 };
-    int kernel_morph_steps{ 3 };
+    int kernel_morph_steps{ 2 };
     int kernel_multiplier{ 0 };
-    int kernel_iterations{ 10 };
+    int kernel_multiplier_steps{ 10 };
     int kernel_size{ 3 + kernel_multiplier * 2 };
     int number_of_iterations{ 1 };
     int how_many_iterations{ 20 };
     std::string number_morph_types{ "Morph Types" };
+    std::string number_kernel_morph_types{ "Kernel Types" };
+    std::string number_kernel_steps{ "Kernel Steps" };
+    std::string numer_of_iterations{ "Number of iterations" };
 };
 
 void thresholdImage(CoinDetection& cd) {
@@ -120,6 +123,9 @@ int main() {
 
     // Create trackbars for Morphological Operations
     cv::createTrackbar(cd.number_morph_types, cd.morph_window, &cd.morph_type, cd.morph_steps, ProcessMorph, &cd);
+    cv::createTrackbar(cd.number_kernel_morph_types, cd.morph_window, &cd.kernel_morph_type, cd.kernel_morph_steps, ProcessMorph, &cd);
+    cv::createTrackbar(cd.number_kernel_steps, cd.morph_window, &cd.kernel_multiplier, cd.kernel_multiplier_steps, ProcessMorph, &cd);
+    cv::createTrackbar(cd.numer_of_iterations, cd.morph_window, &cd.number_of_iterations, cd.how_many_iterations, ProcessMorph, &cd);
 
     // Initial windo
     cv::imshow(cd.image_window, cd.src);
