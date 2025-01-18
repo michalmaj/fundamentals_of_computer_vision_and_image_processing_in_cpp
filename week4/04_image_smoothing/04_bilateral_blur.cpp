@@ -22,17 +22,17 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    cv::Mat filtered1;
+    cv::Mat filtered;
 
     // Apply bilateral filter with given diameter (non-negative)
     int diameter{ 15 };
     int sigma_color{ 80 };
     int sigma_space{ 80 };
-    cv::bilateralFilter(img, filtered1, diameter, sigma_color, sigma_space);
+    cv::bilateralFilter(img, filtered, diameter, sigma_color, sigma_space);
 
 
     cv::imshow("Original", img);
-    cv::imshow("With diameter", filtered1);
+    cv::imshow("With diameter", filtered);
     cv::waitKey(0);
     cv::destroyAllWindows();
 
