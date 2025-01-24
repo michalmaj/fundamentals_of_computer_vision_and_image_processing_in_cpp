@@ -58,11 +58,30 @@ int main() {
     // Drago
     cv::Mat drago_debevec, drago_robertson;
     cv::Ptr<cv::TonemapDrago> tonemap_drago{ cv::createTonemapDrago(1.0, 0.7) };
+    
     tonemap_drago->process(hdr_debevec, drago_debevec);
     drago_debevec = 3 * drago_debevec;
 
     tonemap_drago->process(hdr_robertson, drago_robertson);
     drago_robertson = 3 * drago_robertson;
+
+    // Reinhard
+    cv::Mat reinhard_debevec, reinhard_robertson;
+    cv::Ptr<cv::TonemapReinhard> tonemap_reinhard{ cv::createTonemapReinhard(1.5, 0, 0, 0) };
+
+    tonemap_reinhard->process(hdr_debevec, reinhard_debevec);
+
+    tonemap_reinhard->process(hdr_robertson, reinhard_robertson);
+
+    // Mantiuk
+    cv::Mat mantiuk_debevec, mantiuk_robertson;
+    cv::Ptr<cv::TonemapMantiuk> tonemap_mantiuk{ cv::createTonemapMantiuk(2.2, 0.85, 1.2) };
+
+    tonemap_mantiuk->process(hdr_debevec, mantiuk_debevec);
+    mantiuk_debevec = 3 * mantiuk_debevec;
+
+    tonemap_mantiuk->process(hdr_robertson, mantiuk_robertson);
+    mantiuk_robertson = 3 * mantiuk_robertson;
 
     // Create view for names and images of different exposures
     if (file_names.size() != images.size()) {
@@ -77,8 +96,16 @@ int main() {
 
     cv::namedWindow("Drago Debevec", cv::WINDOW_NORMAL);
     cv::namedWindow("Drago Robertson", cv::WINDOW_NORMAL);
+    cv::namedWindow("Reinhard Debevec", cv::WINDOW_NORMAL);
+    cv::namedWindow("Reinhard Robertson", cv::WINDOW_NORMAL);
+    cv::namedWindow("Mantiuk Debevec", cv::WINDOW_NORMAL);
+    cv::namedWindow("Mantiuk Robertson", cv::WINDOW_NORMAL);
     cv::imshow("Drago Debevec", drago_debevec);
     cv::imshow("Drago Robertson", drago_robertson);
+    cv::imshow("Reinhard Debevec", reinhard_debevec);
+    cv::imshow("Reinhard Robertson", reinhard_robertson);
+    cv::imshow("Mantiuk Debevec", mantiuk_debevec);
+    cv::imshow("Mantiuk Robertson", mantiuk_robertson);
     cv::waitKey(0);
     cv::destroyAllWindows();
 
