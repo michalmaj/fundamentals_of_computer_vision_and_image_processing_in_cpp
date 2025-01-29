@@ -87,8 +87,19 @@ void pencilSketch(const std::atomic<bool>& running, CameraCapture& camera, cv::M
     while (running) {
         cv::Mat frame = camera.getFrame();
         if (!frame.empty()) {
+            // Convert to grayscale
             cv::Mat sketch;
             cv::cvtColor(frame, sketch, cv::COLOR_BGR2GRAY);
+
+            // Process gray image
+            cv::Mat processed = sketch.clone();
+            // Invert colors
+            cv::bitwise_not(processed, processed);
+            // Blur image with high kernel
+            cv::GaussianBlur(processed, processed, cv::Size(21, 21), 0);
+            // Color Dodge Blend: S = I / (255 - B) * 255
+            processed = 255 - processed;
+            cv::divide(sketch, processed, sketch, 256.0);
 
             std::unique_lock<std::shared_mutex> lock(output_mutex);
             output = std::move(sketch);
@@ -96,6 +107,36 @@ void pencilSketch(const std::atomic<bool>& running, CameraCapture& camera, cv::M
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
+
+void cartoonify(const std::atomic<bool>& running, CameraCapture& camera, cv::Mat& output, std::shared_mutex& output_mutex) {
+    while (running) {
+        cv::Mat frame = camera.getFrame();
+        if (!frame.empty()) {
+            // Convert frame to grayscale
+            cv::Mat processed, color, cartoon;
+            cv::cvtColor(frame, processed, cv::COLOR_BGR2GRAY);
+
+            // Apply blur
+            cv::medianBlur(processed, processed, 3);
+           
+            // Find edges
+            cv::adaptiveThreshold(processed, processed, 255, cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY, 9, 9);
+  
+            // Adding drawing effect
+            cv::bilateralFilter(frame, color, 9, 100, 100);
+
+            // Combine color image and edges
+            cv::bitwise_and(color, color, cartoon, processed);
+
+            std::unique_lock<std::shared_mutex> lock(output_mutex);
+            output = std::move(cartoon);
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(30));
+    }
+}
+
+
+
 
 int main() {
     CameraCapture camera{ 0 };
@@ -110,9 +151,20 @@ int main() {
       std::ref(sketch),
       std::ref(sketch_mutex) };
 
+    cv::Mat cartoon;
+    std::atomic<bool> cartoon_running{ true };
+    std::shared_mutex cartoon_mutex;
+
+    std::thread cartoon_thread(cartoonify,
+        std::cref(cartoon_running),
+        std::ref(camera),
+        std::ref(cartoon),
+        std::ref(cartoon_mutex));
+
     while (true) {
         cv::Mat frame = camera.getFrame();
         cv::Mat sketch_copy;
+        cv::Mat cartoon_copy;
 
         if (!frame.empty()) {
             cv::imshow(camera.getWindowName(), frame);
@@ -129,6 +181,17 @@ int main() {
             cv::imshow("Sketch Pencil", sketch_copy);
         }
 
+        {
+            std::shared_lock<std::shared_mutex> lock(cartoon_mutex);
+            if (!cartoon.empty()) {
+                cartoon_copy = cartoon.clone();
+            }
+        }
+
+        if (!cartoon_copy.empty()) {
+            cv::imshow("Cartoonify", cartoon_copy);
+        }
+
         auto c = cv::waitKey(1);
         if (c == 'q') {
             break;
@@ -138,6 +201,11 @@ int main() {
     sketch_running = false;
     if (sketch_thread.joinable()) {
         sketch_thread.join();
+    }
+
+    cartoon_running = false;
+    if (cartoon_thread.joinable()) {
+        cartoon_thread.join();
     }
 
     cv::destroyAllWindows();
