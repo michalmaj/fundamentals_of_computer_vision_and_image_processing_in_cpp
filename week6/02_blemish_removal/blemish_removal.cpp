@@ -13,7 +13,7 @@ public:
         copy_ = img_.clone();
     }
 
-    // Get images
+    // Get image
     const auto& getImg() const { return img_; }
     const auto& getMask() const { return mask_; }
 
