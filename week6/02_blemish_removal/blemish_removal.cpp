@@ -57,16 +57,27 @@ public:
     void setTlWidthHeight(cv::Point middle) {
         tl_.x = std::clamp(middle.x - getDirection(getCurrentIndex()), 0, img_.size().width);
         tl_.y = std::clamp(middle.y - getDirection(getCurrentIndex()), 0, img_.size().height);
-        int br_x = std::clamp(middle.x + getDirection(getCurrentIndex()), 0, img_.cols - 1);
-        int br_y = std::clamp(middle.y + getDirection(getCurrentIndex()), 0, img_.rows - 1);
+        int br_x = std::min(middle.x + getDirection(getCurrentIndex()), img_.cols);
+        int br_y = std::min(middle.y + getDirection(getCurrentIndex()), img_.rows);
 
         width_ = br_x - tl_.x;
         height_ = br_y - tl_.y;
     }
 
-
     void setRoi() {
         roi_ = img_(cv::Range(tl_.y, tl_.y + height_), cv::Range(tl_.x, tl_.x + width_));
+    }
+
+    void porcelainSkin() {
+        try {
+            //cv::bilateralFilter(roi_, processed_, 9, 50, 50);
+            cv::medianBlur(roi_, processed_, 5);
+        }
+        catch (std::exception& e) {
+            std::cerr << e.what() << '\n';
+            std::cout << "ROI type: " << roi_.type() << std::endl;
+        }
+        processed_.copyTo(img_(cv::Range(tl_.y, tl_.y + height_), cv::Range(tl_.x, tl_.x + width_)));
     }
 
 private:
@@ -103,7 +114,7 @@ void getPatch(int event, int x, int y, int flags, void* data) {
     }
 }
 
-// TODO: implement Porcelain Skin algorithm 
+// TODO: implement Porcelain Skin algorithm
 
 int main() {
     std::filesystem::path path{ "../data/images/blemish.png" };
@@ -118,7 +129,7 @@ int main() {
     cv::namedWindow(br.getOriginalWindowName(), cv::WINDOW_NORMAL);
 
     // Create trackbar
-    cv::createTrackbar("Patch", br.getOriginalWindowName(), &br.getCurrentIndex(), br.getMaxPatch());
+    cv::createTrackbar("Patch", br.getOriginalWindowName(), &br.getCurrentIndex(), br.getMaxPatch() - 1);
 
     // Create mouse event
     cv::setMouseCallback(br.getOriginalWindowName(), getPatch, &br);
@@ -128,6 +139,10 @@ int main() {
 
         if (c == 'q') {
             break;
+        }
+
+        if (c == 'p') {
+            br.porcelainSkin();
         }
 
         cv::imshow(br.getOriginalWindowName(), br.getImg());
