@@ -17,12 +17,19 @@ public:
         cv::cvtColor(bgr, lab_, cv::COLOR_BGR2Lab);
     }
 
-    void addColor(cv::Point p) {
+    void addColor(const cv::Point& p) {
+        if (lab_.empty()) {
+            throw std::runtime_error("There is no LAB image!\n");
+        }
         colors_.push_back(lab_.at<cv::Vec3b>(p.y, p.x));
     }
 
-    cv::Mat& getMask() {
+    std::optional<cv::Mat> getMask() {
+        if (colors_.empty()) {
+            return std::nullopt;
+        }
         cv::Mat mask;
+        findLowerUpper();
         cv::inRange(lab_, lower_, upper_, mask);
         return mask;
     }
@@ -46,25 +53,54 @@ private:
     }
 };
 
-class BlueScreenMatting {
+class ScreenMatting {
 public:
-    BlueScreenMatting(const std::filesystem::path& background_path) : background_(cv::imread(background_path.string())) {}
+    ScreenMatting(const std::filesystem::path& background_path) : background_(cv::imread(background_path.string())) {}
 
     auto& getImg() { return img_; }
+    auto& getMask() const { return mask_; }
+
     auto& getImageWindowName() const {
         return image_window_name_;
     }
+
+    void convertToLab() {
+        cps_.setLab(img_);
+    }
+
+    void setPoints(const cv::Point& p) {
+        cps_.addColor(p);
+    }
+
+    void setMask() {
+        auto maskOpt = cps_.getMask();
+        if (!maskOpt) {
+            return;
+        }
+        mask_ = std::move(*maskOpt);
+    }
+
+
 private:
     cv::Mat img_;
+    cv::Mat mask_;
     cv::Mat background_;
     ColorPatchSelector cps_;
 
     const std::string image_window_name_{ "Original Image" };
 };
 
+void colorSelector(int event, int x, int y, int flags, void* data) {
+    ScreenMatting* sm = static_cast<ScreenMatting*>(data);
+
+    if (event == cv::EVENT_LBUTTONDOWN) {
+        sm->setPoints({ x, y });
+    }
+}
+
 int main() {
     cv::VideoCapture cap;
-    std::filesystem::path video_path{ "../data/videos/greenscreen-demo.mp4" };
+    std::filesystem::path video_path{ "../data/videos/greenscreen-asteroid.mp4" };
     cap.open(video_path.string());
     if (!cap.isOpened()) {
         std::cerr << std::format("Can't load video from: {}\n", video_path.string());
@@ -76,21 +112,29 @@ int main() {
         std::cerr << std::format("Can't load an image from: {}", path.string());
         return EXIT_FAILURE;
     }
-    BlueScreenMatting bsm{ path };
+    ScreenMatting sm{ path };
 
-    cv::namedWindow(bsm.getImageWindowName(), cv::WINDOW_AUTOSIZE);
+    cv::namedWindow(sm.getImageWindowName(), cv::WINDOW_AUTOSIZE);
+    cv::setMouseCallback(sm.getImageWindowName(), colorSelector, &sm);
 
     while (true) {
-        cap.read(bsm.getImg());
-        if (bsm.getImg().empty()) {
+        cap.read(sm.getImg());
+        if (sm.getImg().empty()) {
             break;
         }
+        sm.convertToLab();
+        sm.setMask();
+
         auto c = cv::waitKey(100);
         if (c == 'q') {
             break;
         }
 
-        cv::imshow(bsm.getImageWindowName(), bsm.getImg());
+        if (!sm.getMask().empty()) {
+            cv::imshow("Mask", sm.getMask());
+        }
+
+        cv::imshow(sm.getImageWindowName(), sm.getImg());
     }
 
     cap.release();
