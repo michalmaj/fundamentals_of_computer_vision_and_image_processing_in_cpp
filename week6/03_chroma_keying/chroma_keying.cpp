@@ -59,6 +59,7 @@ public:
 
     auto& getImg() { return img_; }
     auto& getMask() const { return mask_; }
+    auto& getBackground() const { return background_; }
 
     auto& getImageWindowName() const {
         return image_window_name_;
@@ -80,6 +81,19 @@ public:
         mask_ = std::move(*maskOpt);
     }
 
+    void process() {
+        if (mask_.empty()) {
+            return;
+        }
+        cv::bitwise_not(mask_, mask_);
+        cv::cvtColor(mask_, mask_, cv::COLOR_GRAY2BGR);
+        resizeBackground();
+        cv::Mat temp = background_.clone();
+        cv::bitwise_and(temp, ~mask_, temp);
+        cv::bitwise_and(img_, mask_, img_);
+        cv::bitwise_or(img_, temp, img_);
+    }
+
 
 private:
     cv::Mat img_;
@@ -88,6 +102,10 @@ private:
     ColorPatchSelector cps_;
 
     const std::string image_window_name_{ "Original Image" };
+
+    void resizeBackground() {
+        cv::resize(background_, background_, img_.size());
+    }
 };
 
 void colorSelector(int event, int x, int y, int flags, void* data) {
@@ -130,11 +148,14 @@ int main() {
             break;
         }
 
+        sm.process();
+
         if (!sm.getMask().empty()) {
             cv::imshow("Mask", sm.getMask());
         }
 
         cv::imshow(sm.getImageWindowName(), sm.getImg());
+        cv::imshow("Background", sm.getBackground());
     }
 
     cap.release();
