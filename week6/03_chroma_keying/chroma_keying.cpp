@@ -86,25 +86,54 @@ public:
             return;
         }
         cv::bitwise_not(mask_, mask_);
+        softness();
         cv::cvtColor(mask_, mask_, cv::COLOR_GRAY2BGR);
-        resizeBackground();
+        if (!resized) {
+            resizeBackground();
+            resized = true;
+        }
         cv::Mat temp = background_.clone();
         cv::bitwise_and(temp, ~mask_, temp);
         cv::bitwise_and(img_, mask_, img_);
         cv::bitwise_or(img_, temp, img_);
     }
 
+    // Softness setup
+    int blur_idx{ 0 };
+    static constexpr int max_blur{ 11 };
+
+    int erode_idx{ 0 };
+    static constexpr int max_erode{ 11 };
+
+    static constexpr std::array<int, max_blur> kernels{ 0, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21 };
 
 private:
     cv::Mat img_;
     cv::Mat mask_;
     cv::Mat background_;
     ColorPatchSelector cps_;
+    bool resized{ false };
 
     const std::string image_window_name_{ "Original Image" };
 
     void resizeBackground() {
         cv::resize(background_, background_, img_.size());
+    }
+
+    void softness() {
+        if (mask_.empty()) {
+            return;
+        }
+        if (blur_idx == 0) {
+            return;
+        }
+        cv::blur(mask_, mask_, cv::Size(kernels.at(blur_idx), kernels.at(blur_idx)));
+
+        if (erode_idx == 0) {
+            return;
+        }
+        auto element = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(kernels.at(erode_idx), kernels.at(erode_idx)));
+        cv::erode(mask_, mask_, element);
     }
 };
 
@@ -134,6 +163,8 @@ int main() {
 
     cv::namedWindow(sm.getImageWindowName(), cv::WINDOW_AUTOSIZE);
     cv::setMouseCallback(sm.getImageWindowName(), colorSelector, &sm);
+    cv::createTrackbar("Blur", sm.getImageWindowName(), &sm.blur_idx, sm.max_blur - 1);
+    cv::createTrackbar("Erode", sm.getImageWindowName(), &sm.erode_idx, sm.max_erode - 1);
 
     while (true) {
         cap.read(sm.getImg());
