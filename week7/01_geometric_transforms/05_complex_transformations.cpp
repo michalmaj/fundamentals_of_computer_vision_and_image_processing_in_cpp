@@ -7,81 +7,6 @@
 #include <numbers>
 #include <cmath>
 
-float degreeToRadians(float angle) {
-    return angle * std::numbers::pi / 180.0f;
-}
-
-cv::Point calculateCenter(const cv::Mat& img) {
-    cv::Mat gray = img.clone();
-    if (gray.channels() != 1) {
-        cv::cvtColor(gray, gray, cv::COLOR_BGR2GRAY);
-    }
-
-    auto moment = cv::moments(gray);
-
-    if (moment.m00 == 0) {
-        throw std::runtime_error("Can't divide by 0");
-    }
-
-    return { static_cast<int>(moment.m10 / moment.m00), static_cast<int>(moment.m01 / moment.m00) };
-}
-
-cv::Mat rotatedImage(const cv::Mat& img, float angle, bool my_center = false, cv::Size size = {}) {
-    if (img.empty()) {
-        throw std::runtime_error("Image is empty\n");
-    }
-
-    if (size.empty()) {
-        size = img.size();
-    }
-    cv::Point center{};
-    float tx{ 0.0 };
-    float ty{ 0.0 };
-    angle = degreeToRadians(angle);
-    float cosTheta = std::cos(angle);
-    float sinTheta = std::sin(angle);
-
-    if (my_center) {
-        center = calculateCenter(img);
-        tx = (1 - cosTheta) * center.x - sinTheta * center.y;
-        ty = sinTheta * center.x + (1 - cosTheta) * center.y;
-    }
-
-    std::array<float, 6> warp_values{ cosTheta, sinTheta, tx, -sinTheta, cosTheta, ty };
-    cv::Mat warp_mat(2, 3, CV_32F, warp_values.data());
-
-    cv::Mat rotated;
-    cv::warpAffine(img, rotated, warp_mat, size);
-
-    return rotated;
-}
-
-cv::Mat rotatedImageCV(const cv::Mat& img, float angle, bool my_center = false, cv::Size size = {}) {
-    if (img.empty()) {
-        throw std::runtime_error("Image is empty\n");
-    }
-
-    if (size.empty()) {
-        size = img.size();
-    }
-    cv::Point center{};
-    float tx{ 0.0 };
-    float ty{ 0.0 };
-
-    if (my_center) {
-        center = calculateCenter(img);
-        tx = center.x;
-        ty = center.y;
-    }
-
-    cv::Mat rotation_matrix = cv::getRotationMatrix2D(cv::Point2f(tx, ty), angle, 1);
-
-    cv::Mat rotated;
-    cv::warpAffine(img, rotated, rotation_matrix, size);
-
-    return rotated;
-}
-
 class AffineTransform {
 public:
     AffineTransform(const cv::Mat& img) : img_(img) {
@@ -95,6 +20,28 @@ public:
             size_.height *= static_cast<int>(scale_y);
             size_.width *= static_cast<int>(scale_x);
         }
+    }
+
+    void rotateImage(float angle, bool my_center = true) {
+        angle = degreeToRadians(angle);
+        float sinTheta{ std::sin(angle) };
+        float cosTheta{ std::cos(angle) };
+
+        if (my_center) {
+            auto center{ calculateCenter() };
+            translate_vector_.at<float>(0, 0) += (1 - cosTheta) * center.x - sinTheta * center.y;
+            translate_vector_.at<float>(1, 0) += sinTheta * center.x + (1 - cosTheta) * center.y;
+        }
+        matrices_.emplace_back((cv::Mat_<float>(2, 2) << cosTheta, sinTheta, -sinTheta, cosTheta));
+    }
+
+    void shearImage(float shear_x = 0.0f, float shear_y = 0.0f) {
+        matrices_.emplace_back((cv::Mat_<float>(2, 2) << 1.0f, shear_x, shear_y, 1.0f));
+    }
+
+    void translateImage(float translate_x = 0.0f, float translate_y = 0.0f) {
+        translate_vector_.at<float>(0, 0) += translate_x;
+        translate_vector_.at<float>(1, 0) += translate_y;
     }
 
     [[nodiscard]] cv::Mat process() {
@@ -114,6 +61,14 @@ public:
         matrices_.reserve(3);
     }
 
+    void setHeight(int heignt) {
+        size_.height *= heignt;
+    }
+
+    void setWidth(int width) {
+        size_.width *= width;
+    }
+
     const auto& getImg() const { return img_; }
     const auto& getOriginalWindows() const { return original_window_; }
     const auto& getProcessedWindows() const { return processed_window_; }
@@ -130,6 +85,26 @@ private:
     // Window names
     const std::string original_window_{ "Original image" };
     const std::string processed_window_{ "Processed image" };
+
+    // Helper methods
+    float degreeToRadians(float angle) const {
+        return angle * std::numbers::pi / 180.0f;
+    }
+
+    cv::Point calculateCenter() const {
+        cv::Mat gray = img_.clone();
+        if (gray.channels() != 1) {
+            cv::cvtColor(gray, gray, cv::COLOR_BGR2GRAY);
+        }
+
+        auto moment = cv::moments(gray);
+
+        if (moment.m00 == 0) {
+            throw std::runtime_error("Can't divide by 0");
+        }
+
+        return { static_cast<int>(moment.m10 / moment.m00), static_cast<int>(moment.m01 / moment.m00) };
+    }
 };
 
 int main() {
@@ -144,7 +119,10 @@ int main() {
 
 
     AffineTransform af{ img };
-    af.scaleImage(2.0);
+    af.scaleImage(1.1f, 1.1f);
+    af.shearImage(-0.1f);
+    af.rotateImage(10.0f);
+    af.translateImage(10.0f, -10.0f);
     auto processed = af.process();
 
     cv::imshow(af.getOriginalWindows(), af.getImg());
