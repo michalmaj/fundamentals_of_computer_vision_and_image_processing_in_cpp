@@ -30,6 +30,14 @@ public:
         return warped_;
     }
 
+    auto getSrcPointsSize() const {
+        return src_points_.size();
+    }
+
+    auto getDstPointsSize() const {
+        return dst_points_.size();
+    }
+
     constexpr std::string srcWindowName() const {
         return "Src";
     }
@@ -63,9 +71,27 @@ public:
         if (dst_.empty() or dst_points_.size() != 4) {
             emptyDst();
         }
+        else {
+            sort_points(dst_points_);
+            dst_size_ = dst_.size();
+        }
 
         auto h = cv::findHomography(src_points_, dst_points_);
+
         cv::warpPerspective(src_, warped_, h, dst_size_);
+
+        if (source_to_dst) {
+            cv::Mat mask = cv::Mat::zeros(dst_.size(), dst_.type());
+            cv::fillConvexPoly(mask, dst_points_, cv::Scalar(255, 255, 255));
+
+            dst_.setTo(cv::Scalar(0, 0, 0), mask);
+            cv::add(dst_, warped_, dst_);
+        }
+    }
+
+    void reset() {
+        src_points_.clear();
+        dst_points_.clear();
     }
 
 
@@ -79,47 +105,42 @@ private:
     std::vector<cv::Point> dst_points_;
 
     void sort_points(std::vector<cv::Point>& points) {
-        cv::Point2f centroid(0, 0);
-        for (const auto& p : points) {
-            centroid.x += p.x;
-            centroid.y += p.y;
-        }
-        centroid.x /= points.size();
-        centroid.y /= points.size();
+        if (points.size() != 4) return;
 
-        std::ranges::sort(points, [&](const cv::Point& a, const cv::Point& b) {
-            double angleA = atan2(a.y - centroid.y, a.x - centroid.x);
-            double angleB = atan2(b.y - centroid.y, b.x - centroid.x);
-            return angleA < angleB;
-            });
+        cv::Point topLeft = *std::min_element(points.begin(), points.end(),
+            [](const cv::Point& a, const cv::Point& b) { return (a.x + a.y) < (b.x + b.y); });
+
+        cv::Point bottomRight = *std::max_element(points.begin(), points.end(),
+            [](const cv::Point& a, const cv::Point& b) { return (a.x + a.y) < (b.x + b.y); });
+
+        cv::Point topRight = *std::min_element(points.begin(), points.end(),
+            [](const cv::Point& a, const cv::Point& b) { return (a.x - a.y) > (b.x - b.y); });
+
+        cv::Point bottomLeft = *std::max_element(points.begin(), points.end(),
+            [](const cv::Point& a, const cv::Point& b) { return (a.x - a.y) > (b.x - b.y); });
+
+        points = { topLeft, topRight, bottomRight, bottomLeft };
     }
 
-    //void emptyDst() {
-    //    dst_size_ = cv::Size(
-    //        std::abs(src_points_[1].x - src_points_[0].x),
-    //        std::abs(src_points_[3].y - src_points_[0].y)
-    //    );
 
-    //    dst_points_ = { {0, 0}, {dst_size_.width, 0}, {dst_size_.width, dst_size_.height}, {0, dst_size_.height} };
-    //}
     void emptyDst() {
         cv::Rect bbox = cv::boundingRect(src_points_);
         dst_size_ = bbox.size();
 
         dst_points_ = {
             {0, 0},
-            {dst_size_.width, 0},
-            {dst_size_.width, dst_size_.height},
-            {0, dst_size_.height}
+            {dst_size_.width - 1, 0},
+            {dst_size_.width - 1, dst_size_.height - 1},
+            {0, dst_size_.height - 1}
         };
     }
 
     void emptySrc() {
         src_points_ = {
           {0, 0},
-          {src_.size().width, 0},
-          {src_.size().width, src_.size().height},
-          {0, src_.size().height}
+          {src_.size().width - 1, 0},
+          {src_.size().width - 1, src_.size().height - 1},
+          {0, src_.size().height - 1}
         };
     }
 
@@ -127,14 +148,25 @@ private:
 
 void setSrcPoints(int event, int x, int y, int flag, void* data) {
     Homography* h = static_cast<Homography*>(data);
-  if (event == cv::EVENT_LBUTTONDOWN) {
-      h->setSrcPoints({ x, y });
-  }
+    if (event == cv::EVENT_LBUTTONDOWN) {
+        if (h->getSrcPointsSize() < 4) {
+            h->setSrcPoints({ x, y });
+        }
+    }
+}
+
+void setDstPoints(int event, int x, int y, int flag, void* data) {
+    Homography* h = static_cast<Homography*>(data);
+    if (event == cv::EVENT_LBUTTONDOWN) {
+        if (h->getDstPointsSize() < 4) {
+            h->setDstPoints({ x, y });
+        }
+    }
 }
 
 int main() {
-    std::filesystem::path book2_path{ "../data/images/book2.jpg" };
-    std::filesystem::path book1_path{ "../data/images/book1.jpg" };
+    std::filesystem::path book2_path{ "../data/images/first-image.jpg" };
+    std::filesystem::path book1_path{ "../data/images/times-square.jpg" };
 
     if (!std::filesystem::exists(book2_path)) {
         std::cerr << std::format("Can't load an image from: {}", book2_path.string());
@@ -147,10 +179,13 @@ int main() {
     }
 
     Homography h1{ book2_path, book1_path };
-    h1.setSrcPoints({ 141, 131 });
-    h1.setSrcPoints({ 480, 159 });
-    h1.setSrcPoints({ 493, 630 });
-    h1.setSrcPoints({ 64, 601 });
+
+
+    cv::namedWindow(h1.srcWindowName(), cv::WINDOW_AUTOSIZE);
+    cv::namedWindow(h1.dstWindowName(), cv::WINDOW_AUTOSIZE);
+
+    cv::setMouseCallback(h1.srcWindowName(), setSrcPoints, &h1);
+    cv::setMouseCallback(h1.dstWindowName(), setDstPoints, &h1);
 
     while (true) {
         auto c = cv::waitKey(10);
@@ -160,6 +195,14 @@ int main() {
 
         if (c == 'p') {
             h1.process();
+        }
+
+        if (c == 'f') {
+            h1.process(true);
+        }
+
+        if (c == 'r') {
+            h1.reset();
         }
 
         cv::imshow(h1.srcWindowName(), h1.getSrc());
