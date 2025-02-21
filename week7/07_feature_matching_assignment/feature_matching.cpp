@@ -211,33 +211,6 @@ private:
         cv::warpPerspective(blue_, blue_warped_, homography_bg_, green_.size());
         cv::warpPerspective(red_, red_warped_, homography_rg_, green_.size());
     }
-
-    void drawLines(cv::Mat& img) {
-        std::vector<cv::Point2f> src_corners{
-          {0.0f, 0.0f},
-          {static_cast<float>(blue_.size().width), 0.0f},
-          {static_cast<float>(blue_.size().width), static_cast<float>(blue_.size().height)},
-          {0.0f, static_cast<float>(blue_.size().height)}
-        };
-        std::vector<cv::Point2f> scene_corners(4);
-        cv::perspectiveTransform(src_corners, scene_corners, homography_bg_);
-
-        float offset_x = static_cast<float>(blue_.size().width);
-        for (auto& pt : scene_corners) {
-            pt.x += offset_x;
-        }
-
-        std::vector<cv::Point2f> hull;
-        cv::convexHull(scene_corners, hull);
-        for (size_t i{ 0 }; i < hull.size(); ++i) {
-            cv::line(img,
-                hull[i],
-                hull[(i + 1) % hull.size()],
-                cv::Scalar(0, 0, 255),
-                5,
-                cv::LINE_AA);
-        }
-    }
 };
 
 int main() {
