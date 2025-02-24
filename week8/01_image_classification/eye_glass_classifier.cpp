@@ -9,10 +9,17 @@
 #include <unordered_set>
 #include <random>
 #include <span>
+#include <memory>
 
 
 class TestTrainData {
 public:
+    /// <summary>
+    /// Loading given datasets
+    /// </summary>
+    /// <param name="path">Path to the directory containing class subfolders with images.</param>
+    /// <param name="number_of_classes">Number of expected classes (subfolders).</param>
+    /// <param name="test_size">Proportion of the dataset to be used for testing (e.g., 0.2 means 20% test, 80% train).</param>
     TestTrainData(const std::filesystem::path& path, size_t number_of_classes = 2, float test_size = 0.2f)
         :
         number_of_classes_(number_of_classes),
@@ -53,8 +60,8 @@ private:
     std::vector<cv::Mat> data_;
     std::vector<cv::Mat> train_;
     std::vector<cv::Mat> test_;
-    std::vector<size_t> train_labels_;
-    std::vector<size_t> test_labels_;
+    std::vector<int> train_labels_;
+    std::vector<int> test_labels_;
 
     size_t number_of_classes_{};
     float test_size_{};
@@ -64,7 +71,7 @@ private:
     void prepare_data(size_t nums) {
         shuffle_data(data_);
         auto size{ data_.size() };
-        size_t take{ static_cast<size_t>(size * test_size_) };
+        int take{ static_cast<int>(size * test_size_) };
         test_.append_range(std::views::reverse(data_) | std::views::take(take));
         test_labels_.append_range(std::views::repeat(nums) | std::views::take(take));
         train_.append_range(data_ | std::views::take(size - take));
@@ -81,7 +88,22 @@ private:
 
 class HogFeatureDescriptor {
 public:
-    HogFeatureDescriptor(std::span<const cv::Mat> images,
+    /// <summary>
+    /// HOG setup for detection problem. Its main purpose is feature extraction form set of images.
+    /// </summary>
+    /// <param name="win_size">The size of the detection window (e.g., 96x32 for signs, 128x64 for pedestrians).</param>
+    /// <param name="block_size">The size of a single HOG block (e.g., 8x8). A block contains multiple cells.</param>
+    /// <param name="block_stride">The step size for moving the block (e.g., 8x8, meaning blocks do not overlap).</param>
+    /// <param name="cell_size">The size of an individual cell (e.g., 4x4). Each block consists of multiple cells.</param>
+    /// <param name="num_bins">The number of histogram bins (e.g., 9 for a range of 0-180° with 20° steps).</param>
+    /// <param name="deriv_aperture">The aperture size for the Sobel operator (default is 1; if 0, OpenCV sets it automatically).</param>
+    /// <param name="win_sigma">The standard deviation for the Gaussian smoothing filter used in normalization (default: 4.0).</param>
+    /// <param name="histogram_norm_type">The histogram normalization method (L2Hys is commonly used).</param>
+    /// <param name="l2_hys_thresh">The L2-Hysteresis normalization threshold (default: 0.2; lower values improve stability).</param>
+    /// <param name="gamma_correction">Whether to apply gamma correction (true improves robustness to lighting variations).</param>
+    /// <param name="n_levels">The number of scale levels in the image pyramid (higher values improve multi-scale detection).</param>
+    /// <param name="signed_gradient">Whether the gradients are signed (true: range -180° to 180°, false: range 0°-180°).</param>
+    HogFeatureDescriptor(
         cv::Size win_size = cv::Size(96, 32),
         cv::Size block_size = cv::Size(8, 8),
         cv::Size block_stride = cv::Size(8, 8),
@@ -95,7 +117,6 @@ public:
         int n_levels = 64,
         bool signed_gradient = true)
         :
-        images_(images.begin(), images.end()),
         win_size_(win_size), block_size_(block_size), block_stride_(block_stride), cell_size_(cell_size),
         num_bins_(num_bins), deriv_aperture_(deriv_aperture), win_sigma_(win_sigma), histogram_norm_type_(histogram_norm_type),
         l2_hys_thresh_(l2_hys_thresh), gamma_correction_(gamma_correction), n_levels_(n_levels), signed_gradient_(signed_gradient) {
@@ -103,11 +124,21 @@ public:
         // Create hog
         hog_ = cv::HOGDescriptor{ win_size_, block_size_, block_stride_, cell_size_, num_bins_,
           deriv_aperture_, win_sigma_, histogram_norm_type_, l2_hys_thresh_, gamma_correction_, n_levels_, signed_gradient_ };
+    }
 
+    void loadImages(std::span<const cv::Mat> images) {
+        if (images.empty()) {
+            throw std::runtime_error("A collection of images is empty!\n");
+        }
+        images_ = { images.begin(), images.end() };
         calculateDescriptors();
     }
 
     cv::Mat getSamples() {
+        if (images_.empty()) {
+            std::cerr << "Load images first!\n";
+            throw std::runtime_error("A collection of images is empty!\n");
+        }
         cv::Mat mat(hog_descriptors_.size(), hog_descriptors_[0].size(), CV_32FC1);
         std::ranges::for_each(hog_descriptors_ | std::views::enumerate, [&](auto&& index_row) {
             auto [i, row] = index_row;
@@ -148,27 +179,139 @@ private:
     }
 };
 
+class SvmClassifier {
+public:
+    SvmClassifier(
+        float regularization = 2.5f,
+        float kernel_gamma = 0.02f,
+        cv::ml::SVM::KernelTypes kernel_type = cv::ml::SVM::RBF,
+        cv::ml::SVM::Types classificator_type = cv::ml::SVM::C_SVC)
+        :
+        regularization_(regularization),
+        kernel_gamma_(kernel_gamma),
+        kernel_type_(kernel_type),
+        classificator_type_(classificator_type) {
+        createModel();
+    }
+
+    void loadTrainTestData(const std::filesystem::path& path, size_t number_of_classes = 2, float test_size = 0.2f) {
+        train_test_data_ = std::make_unique<TestTrainData>(path, number_of_classes, test_size);
+    }
+
+    void setHogFeatureDescriptor(
+        cv::Size win_size = cv::Size(96, 32),
+        cv::Size block_size = cv::Size(8, 8),
+        cv::Size block_stride = cv::Size(8, 8),
+        cv::Size cell_size = cv::Size(4, 4),
+        int num_bins = 9,
+        int deriv_aperture = 0,
+        double win_sigma = 4.0,
+        cv::HOGDescriptor::HistogramNormType histogram_norm_type = cv::HOGDescriptor::L2Hys,
+        double l2_hys_thresh = 0.2,
+        bool gamma_correction = true,
+        int n_levels = 64,
+        bool signed_gradient = true) {
+        if (!checkIfTrainTestExists()) {
+            std::cerr << "First load train and test data!\n";
+            throw std::runtime_error("There is no images to compute!\n");
+        }
+
+        train_descriptors_ = std::make_unique<HogFeatureDescriptor>(
+            win_size,
+            block_size,
+            block_stride,
+            cell_size,
+            num_bins,
+            deriv_aperture,
+            win_sigma,
+            histogram_norm_type,
+            l2_hys_thresh,
+            gamma_correction,
+            n_levels,
+            signed_gradient);
+        train_descriptors_->loadImages(train_test_data_->getTrainImages());
+
+        test_descriptions_ = std::make_unique<HogFeatureDescriptor>(
+            win_size,
+            block_size,
+            block_stride,
+            cell_size,
+            num_bins,
+            deriv_aperture,
+            win_sigma,
+            histogram_norm_type,
+            l2_hys_thresh,
+            gamma_correction,
+            n_levels,
+            signed_gradient);
+        test_descriptions_->loadImages(train_test_data_->getTestImages());
+    }
+
+    void train(const std::filesystem::path& path = "../data/models/eyeGlassClassifierModel.yml") {
+        cv::Ptr<cv::ml::TrainData> td = cv::ml::TrainData::create(
+            train_descriptors_->getSamples(),
+            cv::ml::ROW_SAMPLE,
+            train_test_data_->getTrainLabels());
+
+        model->train(td);
+        model->save(path.string());
+    }
+
+    void predict() {
+        model->predict(test_descriptions_->getSamples(), responses_);
+    }
+
+    void evaluate() {
+        float count{};
+        float accuracy{};
+        for (int i{ 0 }; i < responses_.rows; ++i) {
+            if (responses_.at<  float>(i, 0) == train_test_data_->getTestLabels()[i]) {
+                count += 1.0f;
+            }
+        }
+        accuracy = (count / responses_.rows) * 100;
+        std::cout << "Accuracy: " << accuracy << '\n';
+    }
+
+private:
+    // Model
+    cv::Ptr<cv::ml::SVM> model;
+    // Model parameters
+    float regularization_{};
+    float kernel_gamma_{};
+    cv::ml::SVM::KernelTypes kernel_type_{};
+    cv::ml::SVM::Types classificator_type_{};
+
+    // Model evaluate
+    cv::Mat responses_;
+
+    std::unique_ptr<TestTrainData> train_test_data_;
+    std::unique_ptr<HogFeatureDescriptor> train_descriptors_;
+    std::unique_ptr<HogFeatureDescriptor> test_descriptions_;
+
+    // Model creation
+    void createModel() {
+        model = cv::ml::SVM::create();
+        model->setGamma(kernel_gamma_);
+        model->setC(regularization_);
+        model->setKernel(kernel_type_);
+        model->setType(classificator_type_);
+    }
+
+    bool checkIfTrainTestExists() const {
+        return train_test_data_.get();
+    }
+};
+
 int main() {
     std::filesystem::path path{ "../data/images/glassesDataset" };
 
-    TestTrainData t{ path };
-
-    //for (const auto& dirs : std::filesystem::directory_iterator(path)) {
-    //    if (std::filesystem::is_directory(dirs)) {
-    //        for (const auto& e : std::filesystem::directory_iterator(dirs)) {
-    //            std::println("{}", e.path().string());
-    //        }
-    //    }
-    //}
-
-    HogFeatureDescriptor hog{ t.getTrainImages() };
-
-    std::vector<std::string> names{ ".JPG", ".PNG" };
-    for (const auto& e : names) {
-        auto view = e | std::views::transform(::tolower) | std::ranges::to<std::string>();
-        std::cout << view << '\n';
-    }
-
+    SvmClassifier svm;
+    svm.loadTrainTestData(path);
+    svm.setHogFeatureDescriptor();
+    svm.train();
+    svm.predict();
+    svm.evaluate();
 
     return 0;
 }
