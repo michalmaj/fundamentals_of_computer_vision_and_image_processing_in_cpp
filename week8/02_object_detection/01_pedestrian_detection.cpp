@@ -11,6 +11,7 @@
 #include <span>
 #include <memory>
 #include <list>
+#include <expected>
 
 class ImageLoader {
 public:
@@ -34,16 +35,37 @@ public:
         }
     }
 
-    std::vector<cv::Mat> get_images() {
-        std::vector<cv::Mat> output;
-        output.reserve(images_.size());
-        output.assign(std::make_move_iterator(images_.begin()), std::make_move_iterator(images_.end()));
-        return output;
+    [[nodiscard]] std::expected<std::vector<cv::Mat>, std::string> get_images() {
+        if (images_.empty()) {
+            return  std::unexpected("There is no images to process!\n");
+        }
+
+        return std::move(images_);
     }
 
 private:
-    std::list<cv::Mat> images_;
+    std::vector<cv::Mat> images_;
     inline static std::unordered_set<std::string> valid_extensions_{ ".jpg", ".jpeg", ".png" };
+};
+
+class ModelLoader {
+public:
+    void load_model(const std::filesystem::path& model_path) {
+        if (std::filesystem::is_regular_file(model_path) and valid_model_names_.contains(std::ranges::to<std::string>(model_path.extension().string() | std::views::transform(::tolower)))) {
+            model_ = cv::ml::SVM::load(model_path.string());
+        }
+    }
+
+    [[nodiscard]] std::expected<cv::Ptr<cv::ml::SVM>, std::string> get_model() {
+        if (model_.empty()) {
+            return  std::unexpected("Model is empty!\n");
+        }
+
+        return model_;
+    }
+private:
+    cv::Ptr<cv::ml::SVM> model_;
+    inline const static std::unordered_set<std::string> valid_model_names_{ ".yml" };
 };
 
 class TestTrainData {
@@ -64,23 +86,16 @@ public:
         }
         size_t nums{ 0 };
         for (const auto& dirs : std::filesystem::directory_iterator(path)) {
-            //if (std::filesystem::is_directory(dirs)) {
-            //    for (const auto& file : std::filesystem::directory_iterator(dirs)) {
-            //        if (std::filesystem::is_regular_file(file) and valid_extensions_.contains(std::ranges::to<std::string>(file.path().extension().string() | std::views::transform(::tolower)))) {
-            //            cv::Mat img{ cv::imread(file.path().string()) };
-            //            if (img.empty()) {
-            //                std::cerr << std::format("Can't load file: {}\n", file.path().string());
-            //                continue;
-            //            }
-            //            data_.emplace_back(std::move(img));
-            //        }
-            //    }
-            //    prepare_data(nums);
-            //    nums++;
-            //}
             if (std::filesystem::is_directory(dirs)) {
                 image_loader_.load_images(dirs);
-                data_ = std::move(image_loader_.get_images());
+                auto expected = image_loader_.get_images();
+                if (expected.has_value()) {
+                    data_ = std::move(expected.value());
+                }
+                else {
+                    std::cerr << expected.error() << std::endl;
+                    throw std::runtime_error("Can't load data!\n");
+                }
                 prepare_data(nums);
                 nums++;
             }
@@ -91,10 +106,10 @@ public:
         }
     }
 
-    auto getTrainImages() const { return train_; }
-    auto getTestImages() const { return test_; }
-    auto getTrainLabels() const { return train_labels_; }
-    auto getTestLabels() const { return test_labels_; }
+    auto& getTrainImages() const { return train_; }
+    auto& getTestImages() const { return test_; }
+    auto& getTrainLabels() const { return train_labels_; }
+    auto& getTestLabels() const { return test_labels_; }
 
 private:
     ImageLoader image_loader_;
@@ -167,11 +182,17 @@ public:
           deriv_aperture_, win_sigma_, histogram_norm_type_, l2_hys_thresh_, gamma_correction_, n_levels_, signed_gradient_ };
     }
 
-    void loadImages(std::span<const cv::Mat> images) {
+    void loadImages(const std::vector<cv::Mat>& images) {
         if (images.empty()) {
             throw std::runtime_error("A collection of images is empty!\n");
         }
-        images_ = { images.begin(), images.end() };
+
+        images_.clear();
+        images_.reserve(images.size());
+        std::ranges::transform(images, std::back_inserter(images_), [](const cv::Mat& img) {
+            return img.clone();
+            });
+
         calculateDescriptors();
     }
 
@@ -186,6 +207,10 @@ public:
             std::ranges::copy(row, mat.ptr<float>(i));
             });
         return mat;
+    }
+
+    [[nodiscard]] cv::HOGDescriptor getHog() const {
+        return hog_;
     }
 
 private:
@@ -220,20 +245,133 @@ private:
     }
 };
 
+class MultiScaleDetect {
+public:
+    auto getResults(
+        const cv::Mat& img,
+        cv::HOGDescriptor& hog,
+        float hit_threshold = 1.0,
+        cv::Size win_stride = cv::Size(8, 8),
+        cv::Size padding = cv::Size(32, 32),
+        float scale = 1.05,
+        float final_threshold = 2,
+        bool use_meanshift_grouping = false) {
+        hog.detectMultiScale(img, bboxes_, weights_,
+            hit_threshold, win_stride, padding, scale, final_threshold, use_meanshift_grouping);
+        return std::make_pair(bboxes_, weights_);
+    }
+
+private:
+    std::vector<cv::Rect> bboxes_;
+    std::vector<double> weights_;
+};
+
 class ObjectDetector {
 public:
-    ObjectDetector(const std::filesystem::path& model_path, const std::filesystem::path& images_path) {
+    ObjectDetector(const std::filesystem::path& model_path,
+        const std::filesystem::path& image_path,
+        const cv::HOGDescriptor& hog_descriptor)
+        :
+        hog_descriptor_(hog_descriptor) {
 
+        if (std::filesystem::is_regular_file(model_path)) {
+            model_loader_.load_model(model_path);
+            auto expected_model = model_loader_.get_model();
+            if (expected_model.has_value()) {
+                model_ = expected_model.value();
+            }
+            else {
+                std::cerr << expected_model.error() << std::endl;
+                throw std::runtime_error("Can't load model!\n");
+            }
+        }
+
+        if (std::filesystem::is_directory(image_path)) {
+            image_loader_.load_images(image_path);
+            auto expected_images = image_loader_.get_images();
+            if (expected_images.has_value()) {
+                images_ = expected_images.value();
+            }
+            else {
+                std::cerr << expected_images.error() << std::endl;
+                throw std::runtime_error("Can't load images!\n");
+            }
+        }
     }
+
+    void process(bool own_detector = true) {
+        getSupportVectors();
+        getDecisionFunction();
+        getSvmTrainedDetector(own_detector);
+        setSvmDetector();
+    }
+
+    void multiScaleDetection(
+        const cv::Mat& img,
+        cv::HOGDescriptor& hog,
+        float hit_threshold = 1.0,
+        cv::Size win_stride = cv::Size(8, 8),
+        cv::Size padding = cv::Size(32, 32),
+        float scale = 1.05,
+        float final_threshold = 2,
+        bool use_meanshift_grouping = false) {
+
+        for (const auto& image : images_) {
+
+            auto [bboxes, weights] = detect_.getResults(
+                image,
+                hog_descriptor_,
+                hit_threshold,
+                win_stride,
+                padding,
+                scale,
+                final_threshold,
+                use_meanshift_grouping);
+            std::cout << bboxes.size() << '\n';
+        }
+    }
+
 private:
-    cv::Ptr<cv::ml::SVM> svm_;
+    ImageLoader image_loader_;
+    ModelLoader model_loader_;
+    cv::Ptr<cv::ml::SVM> model_;
     std::vector<cv::Mat> images_;
+    cv::HOGDescriptor hog_descriptor_;
 
-    inline static const std::unordered_set<std::string> valid_model_extensions_{ ".yml" };
-    inline static const std::unordered_set<std::string> valid_images_extensions_{};
+    // Model elements
+    cv::Mat support_vectors_;
+    cv::Mat alpha_;
+    cv::Mat svidx_;
+    double rho_{};
+    std::vector<float> svm_trained_detector_;
 
-    bool checkModelPath() {
+    // Detection in multiscale
+    MultiScaleDetect detect_;
 
+    void getSupportVectors() {
+        support_vectors_ = model_->getSupportVectors();
+    }
+
+    void getDecisionFunction() {
+        rho_ = model_->getDecisionFunction(0, alpha_, svidx_);
+    }
+
+    void getSvmTrainedDetector(bool own_detector = true) {
+        svm_trained_detector_.clear();
+        if (own_detector) {
+            svm_trained_detector_.reserve(support_vectors_.cols + 1);
+            for (int j{ 0 }; j < support_vectors_.cols; ++j) {
+                svm_trained_detector_[j] = -support_vectors_.at<float>(0, j);
+            }
+            svm_trained_detector_[support_vectors_.cols] = static_cast<float>(rho_);
+            return;
+        }
+        svm_trained_detector_ = hog_descriptor_.getDefaultPeopleDetector();
+    }
+
+    // Set svm detector trained
+    void setSvmDetector() {
+        hog_descriptor_.setSVMDetector(svm_trained_detector_);
     }
 };
 
@@ -320,15 +458,36 @@ public:
     }
 
     void evaluate() {
-        float count{};
-        float accuracy{};
-        for (int i{ 0 }; i < responses_.rows; ++i) {
-            if (responses_.at<  float>(i, 0) == train_test_data_->getTestLabels()[i]) {
-                count += 1.0f;
+        float correct{};
+        float tp{}, fp{}, fn{}, tn{};
+
+        for (int i = 0; i < responses_.rows; ++i) {
+            float pred = responses_.at<float>(i, 0);
+            float actual = train_test_data_->getTestLabels()[i];
+
+            if (pred == actual) {
+                correct += 1;
+                if (actual == 1) tp++; else tn++;
+            }
+            else {
+                if (actual == 1) fn++; else fp++;
             }
         }
-        accuracy = (count / responses_.rows) * 100;
-        std::cout << "Accuracy: " << accuracy << '\n';
+
+        float accuracy = (correct / responses_.rows) * 100;
+        float precision = tp / (tp + fp);
+        float recall = tp / (tp + fn);
+
+        std::cout << "Accuracy: " << accuracy << "%\n";
+        std::cout << "Precision: " << precision << "\n";
+        std::cout << "Recall: " << recall << "\n";
+    }
+
+    [[nodiscard]] std::expected<cv::HOGDescriptor, std::string> getHog() {
+        if (!train_descriptors_) {
+            return std::unexpected("Can't get hog descriptors");
+        }
+        return train_descriptors_->getHog();
     }
 
 private:
@@ -362,14 +521,19 @@ private:
 };
 
 int main() {
-    std::filesystem::path path{ "../data/images/glassesDataset" };
+    std::filesystem::path path{ "../data/images/pedestrianDataset" };
 
     SvmClassifier svm;
     svm.loadTrainTestData(path);
-    svm.setHogFeatureDescriptor();
-    svm.train();
+    svm.setHogFeatureDescriptor(cv::Size(64, 128));
+    svm.train("../data/models/pedestrian.yml");
     svm.predict();
     svm.evaluate();
+
+    //std::filesystem::path path{ "../data/models/eyeGlassClassifierModel.yml" };
+    //ModelLoader ml;
+    //ml.load_model(path);
+    //auto model = ml.get_model();
 
     return 0;
 }
