@@ -48,15 +48,20 @@ private:
     inline static std::unordered_set<std::string> valid_extensions_{ ".jpg", ".jpeg", ".png" };
 };
 
-class ModelLoader {
+class SvmModelLoader {
 public:
     void load_model(const std::filesystem::path& model_path) {
-        if (std::filesystem::is_regular_file(model_path) and valid_model_names_.contains(std::ranges::to<std::string>(model_path.extension().string() | std::views::transform(::tolower)))) {
-            model_ = cv::ml::SVM::load(model_path.string());
+        auto expected = checkPath(model_path);
+        if (expected.has_value()) {
+            model_ = cv::ml::SVM::load(expected.value().string());
+        }
+        else {
+            std::cerr << expected.error();
+            throw std::runtime_error(expected.error());
         }
     }
 
-    [[nodiscard]] std::expected<cv::Ptr<cv::ml::SVM>, std::string> get_model() {
+    [[nodiscard]] std::expected<cv::Ptr<cv::ml::SVM>, std::string> get_model() const {
         if (model_.empty()) {
             return  std::unexpected("Model is empty!\n");
         }
@@ -66,6 +71,44 @@ public:
 private:
     cv::Ptr<cv::ml::SVM> model_;
     inline const static std::unordered_set<std::string> valid_model_names_{ ".yml" };
+
+    std::expected<std::filesystem::path, std::string> checkPath(const std::filesystem::path& model_path) const {
+        if (std::filesystem::is_regular_file(model_path) and valid_model_names_.contains(std::ranges::to<std::string>(model_path.extension().string() | std::views::transform(::tolower)))) {
+            return model_path;
+        }
+        return std::string(std::format("Can't load model from: {}", model_path.string()));
+    }
+};
+
+class HogDescriptorLoader {
+public:
+    void load_descriptor(const std::filesystem::path& model_path) {
+        auto expected = checkPath(model_path);
+        if (expected.has_value()) {
+            hog_.load(expected.value().string());
+        }
+        else {
+            std::cerr << expected.error();
+            throw std::runtime_error(expected.error());
+        }
+    }
+
+    [[nodiscard]] std::expected<cv::HOGDescriptor, std::string> get_descriptor() const {
+        if (hog_.getDescriptorSize() > 0) {
+            return hog_;
+        }
+        return  std::unexpected("Model is empty!\n");
+    }
+private:
+    cv::HOGDescriptor hog_;
+    inline const static std::unordered_set<std::string> valid_model_names_{ ".yml" };
+
+    std::expected<std::filesystem::path, std::string> checkPath(const std::filesystem::path& model_path) const {
+        if (std::filesystem::is_regular_file(model_path) and valid_model_names_.contains(std::ranges::to<std::string>(model_path.extension().string() | std::views::transform(::tolower)))) {
+            return model_path;
+        }
+        return std::string(std::format("Can't load descriptor from: {}", model_path.string()));
+    }
 };
 
 class TestTrainData {
@@ -269,16 +312,14 @@ private:
 class ObjectDetector {
 public:
     ObjectDetector(const std::filesystem::path& model_path,
-        const std::filesystem::path& image_path,
-        const cv::HOGDescriptor& hog_descriptor)
-        :
-        hog_descriptor_(hog_descriptor) {
+        const std::filesystem::path& hog_path,
+        const std::filesystem::path& image_path) {
 
         if (std::filesystem::is_regular_file(model_path)) {
             model_loader_.load_model(model_path);
             auto expected_model = model_loader_.get_model();
             if (expected_model.has_value()) {
-                model_ = expected_model.value();
+                model_ = std::move(expected_model.value());
             }
             else {
                 std::cerr << expected_model.error() << std::endl;
@@ -286,11 +327,23 @@ public:
             }
         }
 
+        if (std::filesystem::is_regular_file(hog_path)) {
+            hog_loader_.load_descriptor(hog_path);
+            auto expected_hog = hog_loader_.get_descriptor();
+            if (expected_hog.has_value()) {
+                hog_descriptor_ = std::move(expected_hog.value());
+            }
+            else {
+                std::cerr << expected_hog.error() << std::endl;
+                throw std::runtime_error("Can't load hog descriptor!\n");
+            }
+        }
+
         if (std::filesystem::is_directory(image_path)) {
             image_loader_.load_images(image_path);
             auto expected_images = image_loader_.get_images();
             if (expected_images.has_value()) {
-                images_ = expected_images.value();
+                images_ = std::move(expected_images.value());
             }
             else {
                 std::cerr << expected_images.error() << std::endl;
@@ -307,13 +360,11 @@ public:
     }
 
     void multiScaleDetection(
-        const cv::Mat& img,
-        cv::HOGDescriptor& hog,
-        float hit_threshold = 1.0,
+        float hit_threshold = 1.0f,
         cv::Size win_stride = cv::Size(8, 8),
         cv::Size padding = cv::Size(32, 32),
-        float scale = 1.05,
-        float final_threshold = 2,
+        float scale = 1.05f,
+        float final_threshold = 2.0f,
         bool use_meanshift_grouping = false) {
 
         for (const auto& image : images_) {
@@ -328,12 +379,21 @@ public:
                 final_threshold,
                 use_meanshift_grouping);
             std::cout << bboxes.size() << '\n';
+            int i{ 0 };
+            if (!bboxes.empty()) {
+                for (const auto& rect : bboxes) {
+                    cv::rectangle(image, rect, cv::Scalar(255, 0, 255), 2, cv::LINE_AA);
+                }
+                cv::imshow(std::to_string(i++), image);
+                cv::waitKey(0);
+            }
         }
     }
 
 private:
     ImageLoader image_loader_;
-    ModelLoader model_loader_;
+    SvmModelLoader model_loader_;
+    HogDescriptorLoader hog_loader_;
     cv::Ptr<cv::ml::SVM> model_;
     std::vector<cv::Mat> images_;
     cv::HOGDescriptor hog_descriptor_;
@@ -359,7 +419,7 @@ private:
     void getSvmTrainedDetector(bool own_detector = true) {
         svm_trained_detector_.clear();
         if (own_detector) {
-            svm_trained_detector_.reserve(support_vectors_.cols + 1);
+            svm_trained_detector_.resize(support_vectors_.cols + 1);
             for (int j{ 0 }; j < support_vectors_.cols; ++j) {
                 svm_trained_detector_[j] = -support_vectors_.at<float>(0, j);
             }
@@ -443,7 +503,7 @@ public:
         test_descriptions_->loadImages(train_test_data_->getTestImages());
     }
 
-    void train(const std::filesystem::path& path = "../data/models/eyeGlassClassifierModel.yml") {
+    void train(const std::filesystem::path& path) {
         cv::Ptr<cv::ml::TrainData> td = cv::ml::TrainData::create(
             train_descriptors_->getSamples(),
             cv::ml::ROW_SAMPLE,
@@ -483,10 +543,11 @@ public:
         std::cout << "Recall: " << recall << "\n";
     }
 
-    [[nodiscard]] std::expected<cv::HOGDescriptor, std::string> getHog() {
+    [[nodiscard]] std::expected<cv::HOGDescriptor, std::string> getSaveHogDescriptor(const std::filesystem::path& path) const {
         if (!train_descriptors_) {
             return std::unexpected("Can't get hog descriptors");
         }
+        train_descriptors_->getHog().save(path.string());
         return train_descriptors_->getHog();
     }
 
@@ -521,19 +582,28 @@ private:
 };
 
 int main() {
-    std::filesystem::path path{ "../data/images/pedestrianDataset" };
+    //std::filesystem::path path{ "../data/images/glassesDataset" };
 
-    SvmClassifier svm;
-    svm.loadTrainTestData(path);
-    svm.setHogFeatureDescriptor(cv::Size(64, 128));
-    svm.train("../data/models/pedestrian.yml");
-    svm.predict();
-    svm.evaluate();
+    //SvmClassifier svm;
+    //svm.loadTrainTestData(path);
+    //svm.setHogFeatureDescriptor();
+    //svm.train("../data/models/eyeGlassClassifierModel.yml");
+    //svm.predict();
+    //svm.evaluate();
+    //auto hog = svm.getSaveHogDescriptor("../data/models/eyeGlassClassifierHog.yml");
 
-    //std::filesystem::path path{ "../data/models/eyeGlassClassifierModel.yml" };
-    //ModelLoader ml;
-    //ml.load_model(path);
-    //auto model = ml.get_model();
+    ObjectDetector detector{ "../data/models/eyeGlassClassifierModel.yml",
+      "../data/models/eyeGlassClassifierHog.yml",
+    "../data/images/glasses" };
+    detector.process();
+
+    float hit_threshold = -0.5f;
+    cv::Size win_stride = cv::Size(8, 8);
+    cv::Size padding = cv::Size(32, 32);
+    float scale = 1.02f;
+    float final_threshold = 3.0f;
+    bool use_meanshift_grouping = false;
+    detector.multiScaleDetection(hit_threshold, win_stride, padding, scale, final_threshold, use_meanshift_grouping);
 
     return 0;
 }
