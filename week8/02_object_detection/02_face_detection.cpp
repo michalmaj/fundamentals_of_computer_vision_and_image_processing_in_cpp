@@ -19,7 +19,11 @@ public:
     }
 
     auto getCascade() const {
-        return checkCascade();
+        auto expected = checkCascade();
+        if (!expected) {
+            throw std::runtime_error(expected.error());
+        }
+        return expected.value();
     }
 
 private:
@@ -46,15 +50,104 @@ private:
     }
 };
 
+class CascadeClassifierDetector {
+public:
+    CascadeClassifierDetector(const std::filesystem::path& path) {
+        classifier_.load(path);
+        setParams();
+    }
+    void setParams(double scale_factor = 1.2, int min_neighbors = 9) {
+        scale_factor_ = scale_factor;
+        min_neighbors_ = min_neighbors;
+    }
+
+    [[nodiscard]] cv::Mat getImageWithDetection(const cv::Mat& img) const {
+        cv::Mat output = img.clone();
+        auto expected = convertToGray(img);
+        if (!expected) {
+            throw std::runtime_error(expected.error());
+        }
+        auto gray = expected.value();
+        std::vector<cv::Rect> faces;
+        classifier_.getCascade().detectMultiScale(gray, faces, scale_factor_, min_neighbors_);
+
+        for (auto const& face : faces) {
+            int x = face.x;
+            int y = face.y;
+            int width = face.width;
+            int height = face.height;
+
+            cv::rectangle(output, cv::Point(x, y), cv::Point(x + width, y + height), cv::Scalar(255, 0, 255), 3);
+        }
+        return output;
+    }
+protected:
+    LoadCascade classifier_;
+    double scale_factor_{};
+    int min_neighbors_{};
+
+    std::expected<cv::Mat, std::string> convertToGray(const cv::Mat& img) const {
+        if (img.empty()) {
+            return std::unexpected("Your image is empty!\n");
+        }
+        cv::Mat gray;
+        if (img.channels() == 1) {
+            gray = img.clone();
+        }
+        else if (img.channels() == 3) {
+            cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
+        }
+        else if (img.channels() == 4) {
+            cv::cvtColor(img, gray, cv::COLOR_BGRA2GRAY);
+        }
+        else {
+            return std::unexpected("Your images has wrong number of channels!\n");
+        }
+        return gray;
+    }
+};
+
 
 int main() {
-
-    LoadCascade loader;
-    loader.load("../data/models/haarcascade_frontalface_default.xml");
-    auto expected = loader.getCascade();
-    if (expected.has_value()) {
-        std::cout << "FINE!\n";
+    cv::VideoCapture cap(0);
+    if (!cap.isOpened()) {
+        std::println(std::cerr, "Can't open camera stream!");
+        return EXIT_FAILURE;
     }
+
+    CascadeClassifierDetector face_detector{ "../data/models/haarcascade_frontalface_default.xml" };
+    CascadeClassifierDetector smile_detector{ "../data/models/haarcascade_smile.xml" };
+    smile_detector.setParams(1.4, 9);
+
+    while (true) {
+        cv::Mat frame;
+        cap.read(frame);
+
+        if (frame.empty()) {
+            std::println(std::cerr, "Frame is empty!");
+            break;
+        }
+
+        auto face = face_detector.getImageWithDetection(frame);
+        if (!face.empty()) {
+            cv::imshow("Face detected", face);
+        }
+
+        auto smile = smile_detector.getImageWithDetection(frame);
+        if (!smile.empty()) {
+            cv::imshow("Smile detected", smile);
+        }
+
+        cv::imshow("Frame", frame);
+        auto c = cv::waitKey(1);
+
+        if (c == 'q') {
+            break;
+        }
+    }
+
+    cap.release();
+    cv::destroyAllWindows();
 
     return 0;
 }
