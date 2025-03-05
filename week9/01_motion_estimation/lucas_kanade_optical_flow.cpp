@@ -73,6 +73,26 @@ private:
     std::vector<cv::Point2f> points_;
 };
 
+class OpticalFlow {
+public:
+
+
+private:
+    // Images
+    cv::Mat img_;
+    cv::Mat gray_;
+
+    std::vector<cv::Point2f> old_points_;
+    std::vector<cv::Point2f> new_points_;
+
+    std::vector<uchar> status_;
+    std::vector<float> errors_;
+
+    std::vector<cv::Point2f> good_old_points_;
+    std::vector<cv::Point2f> good_new_points_;
+
+};
+
 int main() {
 
 
