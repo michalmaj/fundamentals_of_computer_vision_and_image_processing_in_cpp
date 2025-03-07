@@ -79,8 +79,8 @@ public:
 
 private:
     // Images
-    cv::Mat img_; // original image
-    cv::Mat gray_; // grayscale image
+    cv::Mat img_;
+    cv::Mat gray_;
 
     std::vector<cv::Point2f> old_points_;
     std::vector<cv::Point2f> new_points_;
