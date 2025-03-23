@@ -5,6 +5,7 @@
 #include <opencv2/video/tracking.hpp>
 #include <expected>
 #include <vector>
+#include <filesystem>
 
 class DetectCornersToTrack {
 public:
@@ -18,7 +19,7 @@ public:
     /// <param name="block_size">Size of an average block for computing a derivative covariation matrix over each pixel neighborhood</param>
     /// <param name="use_harris_detector">If true algorithm will use Harris detector instead of Shi-Tomasi</param>
     /// <param name="k">Sets the sensibility of Harris detector</param>
-    void set_params(int max_corners, double quality_level, double min_distance,
+    void setParams(int max_corners, double quality_level, double min_distance,
         cv::Mat mask = {}, int block_size = 3, bool use_harris_detector = false, double k = 0.04) {
         max_corners_ = max_corners;
         quality_level_ = quality_level;
@@ -59,6 +60,10 @@ public:
         return points_;
     }
 
+    void resetParams() {
+        is_set = false;
+    }
+
 private:
     int max_corners_{};
     double quality_level_{};
@@ -94,7 +99,23 @@ private:
 };
 
 int main() {
+    std::filesystem::path path{ "../data/videos/cycle.mp4" };
+    if (path.empty()) {
+        std::cerr << std::format("Can't load video from: {}\n", path.string());
+        return EXIT_FAILURE;
+    }
 
+    cv::VideoCapture cap{ path.string() };
+
+    if (!cap.isOpened()) {
+        std::cerr << std::format("Video from {} can't be loaded!\n", path.string());
+        return EXIT_FAILURE;
+    }
+
+    int width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    int height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+
+    cv::VideoWriter out("sparse-output.mp4", cv::VideoWriter::fourcc('M', 'P', '4', 'V'), 20, cv::Size(width, height));
 
     return 0;
 }
