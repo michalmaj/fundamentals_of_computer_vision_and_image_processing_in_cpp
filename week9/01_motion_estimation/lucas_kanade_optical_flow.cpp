@@ -80,12 +80,44 @@ private:
 
 class OpticalFlow {
 public:
+    void setGoodFeaturesToTrack(int max_corners = 100, double quality_level = 0.3, double min_distance = 7,
+        cv::Mat mask = {}, int block_size = 3, bool use_harris_detector = false, double k = 0.04) {
+        track_.setParams(max_corners, quality_level, min_distance, mask, block_size, use_harris_detector, k);
+    }
+
+    void resetGoodFeaturesToTrack() {
+        track_.resetParams();
+    }
+
+    void process(const cv::Mat& frame) {
+        if (!checkCorrectness(frame)) {
+            throw std::runtime_error("Can't process your frame!\n");
+        }
+        getNextImg(frame);
+        setGoodFeaturesToTrack();
+        auto expected = track_.getPoints(new_gray_);
+
+        if (!expected) {
+            throw std::runtime_error("Can't get good features to track!\n");
+        }
+
+        old_points_ = expected.value();
+
+        if (first_image) {
+            first_image = false;
+            old_gray_ = new_gray_.clone();
+            return;
+        }
+
+    }
+
 
 
 private:
     // Images
     cv::Mat img_;
-    cv::Mat gray_;
+    cv::Mat old_gray_;
+    cv::Mat new_gray_;
 
     std::vector<cv::Point2f> old_points_;
     std::vector<cv::Point2f> new_points_;
@@ -96,6 +128,31 @@ private:
     std::vector<cv::Point2f> good_old_points_;
     std::vector<cv::Point2f> good_new_points_;
 
+    DetectCornersToTrack track_;
+
+    bool first_image = true;
+
+
+    void getNextImg(const cv::Mat& frame) {
+        img_ = frame.clone();
+        convertToGray(img_);
+    }
+
+    void convertToGray(const cv::Mat& img) {
+        cv::cvtColor(img, new_gray_, cv::COLOR_BGR2GRAY);
+    }
+
+    bool checkCorrectness(const cv::Mat& frame) {
+        if (frame.channels() != 3) {
+            std::cerr << "Frame must be in BGR format!\n";
+            return false;
+        }
+        if (frame.empty()) {
+            std::cerr << "Frame is empty!\n";
+            return false;
+        }
+        return true;
+    }
 };
 
 int main() {
